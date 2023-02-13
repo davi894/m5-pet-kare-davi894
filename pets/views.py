@@ -1,10 +1,5 @@
 from rest_framework.pagination import PageNumberPagination
-from .serializers_pets import (
-    PetSerializerInput,
-    PetSerializerOutput,
-    TraitSerializerOutput,
-    PetSerializerPatch,
-)
+from .serializers_pets import PetSerializer
 from rest_framework.views import APIView, status
 from rest_framework.response import Response
 from groups.models import Group
@@ -16,73 +11,80 @@ import ipdb
 class PetView(APIView, PageNumberPagination):
     def post(self, req):
         dict_req_pet = req.data
-
-        serializers_post_pet = PetSerializerInput(data=dict_req_pet)
-
+        serializers_post_pet = PetSerializer(data=dict_req_pet)
         serializers_post_pet.is_valid(raise_exception=True)
-
         traits = serializers_post_pet.validated_data.pop("traits")
         groups = serializers_post_pet.validated_data.pop("group")
+
         existing_group = Group.objects.filter(
             scientific_name__iexact=groups["scientific_name"]
         )
+        group_id = []
 
         if existing_group:
-            pet_existing_group = Pet.objects.create(
-                **serializers_post_pet.validated_data, group_id=existing_group[0].id
-            )
-            for trait in traits:
-                existing_Trait = Trait.objects.filter(name__iexact=trait["name"])
-                #
-                if existing_Trait:
-                    pet_existing_group.traits.add(**trait)
-                #
-                else:
-                    create = Trait.objects.create(**trait)
-                    pet_existing_group.traits.add(create)
-
-            traits_serializer = TraitSerializerOutput(
-                pet_existing_group.traits, many=True
-            )
-            serializer_pet_existing_group = PetSerializerOutput(pet_existing_group)
-
-            data_serializer_pet_existing_group = {
-                **serializer_pet_existing_group.data,
-                "traits": traits_serializer.data,
-            }
-
-            return Response(
-                data_serializer_pet_existing_group,
-                status.HTTP_201_CREATED,
-            )
-
-        groups_create = Group.objects.create(**groups)
-        group_id = groups_create.id
+            group_id.append(existing_group[0].id)
+        else:
+            groups_create = Group.objects.create(**groups)
+            group_id.append(groups_create.id)
 
         pet = Pet.objects.create(
-            **serializers_post_pet.validated_data, group_id=group_id
+            **serializers_post_pet.validated_data, group_id=group_id[0]
         )
 
         for trait in traits:
-            create = Trait.objects.create(**trait)
-            pet.traits.add(create)
+            existing_Trait = Trait.objects.filter(name__iexact=trait["name"])
+            if existing_Trait:
+                pet.traits.add(existing_Trait[0].id)
+                pet.save()
+            else:
+                create = Trait.objects.create(**trait)
+                pet.traits.add(create.id)
 
-        pet_serializer = PetSerializerOutput(pet)
-        traits_serializer = TraitSerializerOutput(pet.traits, many=True)
+        pet_serializer = PetSerializer(pet)
 
-        data = {
-            **pet_serializer.data,
-            "traits": traits_serializer.data,
-        }
-
-        return Response(data, status.HTTP_201_CREATED)
+        return Response(pet_serializer.data, status.HTTP_201_CREATED)
 
     def get(self, req):
+
         pets = Pet.objects.all()
 
-        result_page = self.paginate_queryset(pets, req)
-        serializer = PetSerializerOutput(result_page, many=True)
+        tarit = req.query_params.get("trait")
 
+        if tarit:
+            aa = []
+            trait_list = Pet.objects.all()
+
+            for x in trait_list:
+                for y in x.traits.all():
+                    if y.name == tarit:
+                        aa.append(
+                            {
+                                "id": x.id,
+                                "name": x.name,
+                                "age": x.age,
+                                "weight": x.weight,
+                                "sex": x.sex,
+                                "group": {
+                                    "id": x.group.id,
+                                    "scientific_name": x.group.scientific_name,
+                                    "created_at": x.group.created_at,
+                                },
+                                "traits": [
+                                    {
+                                        "id": y.id,
+                                        "name": y.name,
+                                        "created_at": y.created_at,
+                                    }
+                                ],
+                            }
+                        )
+
+            result_page = self.paginate_queryset(pets, req, view=self)
+            serializer = PetSerializer(result_page, many=True)
+            return self.get_paginated_response(aa)
+
+        result_page = self.paginate_queryset(pets, req, view=self)
+        serializer = PetSerializer(result_page, many=True)
         return self.get_paginated_response(serializer.data)
 
 
@@ -90,7 +92,7 @@ class PetViewId(APIView):
     def get(self, req, pet_id):
         try:
             pet = Pet.objects.get(id=pet_id)
-            serializer = PetSerializerOutput(pet)
+            serializer = PetSerializer(pet)
 
             return Response(serializer.data, status.HTTP_200_OK)
 
@@ -101,81 +103,45 @@ class PetViewId(APIView):
         try:
             dict_req_pet = req.data
             pet = Pet.objects.get(id=pet_id)
-            serializer = PetSerializerOutput(pet)
-            id_group = []
-            list_trait = []
 
-            PetSerializerOutput(data=dict_req_pet).is_valid(raise_exception=True)
+            serializer = PetSerializer(data=dict_req_pet, partial=True)
 
-            if "group" in dict_req_pet.keys():
-                group = dict_req_pet.pop("group")
+            serializer.is_valid(raise_exception=True)
+
+            if "group" in serializer.validated_data.keys():
+                group = serializer.validated_data.pop("group")
                 existing_group = Group.objects.filter(
                     scientific_name__iexact=group["scientific_name"]
                 )
-                if existing_group:
-                    id_group.append(
-                        {
-                            "id": existing_group[0].id,
-                            "scientific_name": existing_group[0].scientific_name,
-                            "created_at": existing_group[0].created_at,
-                        }
-                    )
-                else:
-                    pet.group = None
-                    pet.save()
-                    groups_create = Group.objects.create(**group)
-                    id_group.append(
-                        {
-                            "id": groups_create.id,
-                            "scientific_name": groups_create.scientific_name,
-                            "created_at": groups_create.created_at,
-                        }
-                    )
-                    pet.save()
 
-            if "traits" in dict_req_pet.keys():
-                traits = dict_req_pet.pop("traits")
-                for trait in traits:
+                if existing_group:
+                    pet.group = None
+                    pet.group = existing_group[0]
+                else:
+                    groups_create = Group.objects.create(**group)
+                    pet.group = groups_create.id
+
+            if "traits" in serializer.validated_data.keys():
+                traits_req = serializer.validated_data.pop("traits")
+                pet.traits.clear()
+                for trait in traits_req:
                     existing_Trait = Trait.objects.filter(name__iexact=trait["name"])
                     if existing_Trait:
-                        list_trait.append(
-                            {
-                                "id": existing_Trait[0].id,
-                                "traits_name": existing_Trait[0].name,
-                                "created_at": existing_Trait[0].created_at,
-                            }
-                        )
+                        pet.traits.add(existing_Trait[0])
                     else:
-                        pet.traits.clear()
-                        traits_create = Trait.objects.create(**trait)
-                        list_trait.append(
-                            {
-                                "id": traits_create.id,
-                                "traits_name": traits_create.name,
-                                "created_at": traits_create.created_at,
-                            }
-                        )
-                        pet.traits.add(
-                            {
-                                "id": traits_create.id,
-                                "name": traits_create.traits_name,
-                                "created_at": traits_create.created_at,
-                            }
-                        )
-                        pet.save()
 
-            update_pet = {
-                **serializer.data,
-                **dict_req_pet,
-                "group": id_group[0],
-                "traits": list_trait,
-            }
-            pet_update = Pet(**update_pet)
-            pet_update.save()
+                        create = Trait.objects.create(name=trait["name"])
+                        pet.traits.add(create)
+
+            for key, value in serializer.validated_data.items():
+                setattr(pet, key, value)
+
+            pet.save()
+            serializer = PetSerializer(pet)
 
             return Response(
-                update_pet,
-                status.HTTP_201_CREATED,
+                serializer.data,
+                status.HTTP_200_OK,
             )
 
         except Pet.DoesNotExist:
@@ -189,15 +155,3 @@ class PetViewId(APIView):
             return Response(status=status.HTTP_204_NO_CONTENT)
         except Pet.DoesNotExist:
             return Response({"detail": "Not found."}, status.HTTP_404_NOT_FOUND)
-
-
-class PetViewParams(APIView):
-    def get(self, req):
-        trait = req.query_params.get("trait", None)
-        print(trait)
-
-        trait_list = Pet.objects.filter(traits__name__iexact=trait)
-
-        serializer = PetSerializerOutput(trait_list, many=True)
-
-        return Response(serializer.data, status.HTTP_200_OK)
