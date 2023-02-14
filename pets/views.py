@@ -45,43 +45,14 @@ class PetView(APIView, PageNumberPagination):
         return Response(pet_serializer.data, status.HTTP_201_CREATED)
 
     def get(self, req):
-
         pets = Pet.objects.all()
 
-        tarit = req.query_params.get("trait")
-
-        if tarit:
-            aa = []
-            trait_list = Pet.objects.all()
-
-            for x in trait_list:
-                for y in x.traits.all():
-                    if y.name == tarit:
-                        aa.append(
-                            {
-                                "id": x.id,
-                                "name": x.name,
-                                "age": x.age,
-                                "weight": x.weight,
-                                "sex": x.sex,
-                                "group": {
-                                    "id": x.group.id,
-                                    "scientific_name": x.group.scientific_name,
-                                    "created_at": x.group.created_at,
-                                },
-                                "traits": [
-                                    {
-                                        "id": y.id,
-                                        "name": y.name,
-                                        "created_at": y.created_at,
-                                    }
-                                ],
-                            }
-                        )
-
-            result_page = self.paginate_queryset(pets, req, view=self)
+        trait = req.query_params.get("trait")
+        if trait:
+            pest_filter = pets.filter(traits__name__iexact=trait)
+            result_page = self.paginate_queryset(pest_filter, req, view=self)
             serializer = PetSerializer(result_page, many=True)
-            return self.get_paginated_response(aa)
+            return self.get_paginated_response(serializer.data)
 
         result_page = self.paginate_queryset(pets, req, view=self)
         serializer = PetSerializer(result_page, many=True)
@@ -119,7 +90,7 @@ class PetViewId(APIView):
                     pet.group = existing_group[0]
                 else:
                     groups_create = Group.objects.create(**group)
-                    pet.group = groups_create.id
+                    pet.group = groups_create
 
             if "traits" in serializer.validated_data.keys():
                 traits_req = serializer.validated_data.pop("traits")
@@ -129,7 +100,6 @@ class PetViewId(APIView):
                     if existing_Trait:
                         pet.traits.add(existing_Trait[0])
                     else:
-
                         create = Trait.objects.create(name=trait["name"])
                         pet.traits.add(create)
 
